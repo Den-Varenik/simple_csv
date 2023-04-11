@@ -7,6 +7,9 @@ from sqlalchemy import pool
 from app.config.database import Base
 from app.config.settings import DATABASES
 
+from app.models.users import User, user_category
+from app.models.categories import Category
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
