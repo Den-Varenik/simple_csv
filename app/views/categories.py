@@ -5,9 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.categories import Category
 from app.schemas.categories import CategoryUpdate, CategorySchema, CategoryCreate
-from app.config.database import engine, Base, get_db
-
-Base.metadata.create_all(bind=engine)
+from app.config.database import get_db
 
 router = APIRouter(
     prefix="/categories",
@@ -18,8 +16,6 @@ router = APIRouter(
 @router.get("/", response_model=List[CategorySchema])
 def get_all_categories(db: Session = Depends(get_db)):
     categories = db.query(Category).all()
-    print('From view', categories)
-    print(db)
     return categories
 
 
