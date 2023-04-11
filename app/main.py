@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from uvicorn import run
 
-from app.views import categories, users
+from app.views import categories, users, dataset
 from app.config.settings import SECRET_KEY
 
 app = FastAPI()
@@ -9,6 +9,7 @@ app.state.secret_key = SECRET_KEY
 
 app.include_router(categories.router)
 app.include_router(users.router)
+app.include_router(dataset.router)
 
 
 @app.get("/")
