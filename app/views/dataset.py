@@ -1,6 +1,7 @@
 from datetime import datetime, date, timedelta
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql import extract
 
@@ -60,10 +61,6 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
         db.bulk_save_objects([Category(name=name) for name in new_categories])
         db.commit()
 
-    # print(set_categories)
-    # print(database_categories)
-    # print(new_categories)
-
     for num, category_name in enumerate(unique_categories):
         category = db.query(Category).filter_by(name=category_name).first()
 
@@ -91,56 +88,33 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
             user.categories.append(category)
         db.add_all(users)
         db.commit()
-
-        # print(set_emails)
-        # print(database_emails)
-        # print(new_emails)
-
-
-
-    # user_objects = []
-    #
-    # category_names = []
-    # category_users = []
-    # for row in data:
-    #     category_name = row.pop('category').lower().capitalize()
-    #
-    #     row['birthDate'] = datetime.strptime(row['birthDate'], '%Y-%m-%d').date()
-    #     user = User(**row)
-    #     user_objects.append(user)
-    #
-        # try:
-        #     index = category_names.index('category_name')
-        # except ValueError:
-        #     category_names.append(category_name)
-        #     users = [user]
-        #     category_users.append(users)
-        #     continue
-        #
-        # users = category_users[index]
-        # users.append(user)
-
-    # db.bulk_save_objects(user_objects)
-    # db.bulk_save_objects(category_objects)
-
-    # db.commit()
-
-    # for user in iter(user_objects):
-    # db.refresh(user_objects)
-
-    # result = db.query(Category.name).filter(Category.name.in_(category_names)).all()
-    # flat_result = [item for sublist in result for item in sublist]
-    # print(flat_result)
-    # print(category_names)
-
-    # for num, name in enumerate(category_names):
-    #     category, created = create_or_update(db, Category, name=name)
-        # user.categories.append(category_objects[num])
-
-    # db.bulk_save_objects(user_objects)
-    # db.commit()
-
     return {"message": "File uploaded successfully"}
+
+
+def query_filter(
+        query,
+        category_id: int = None,
+        gender: str = None,
+        dob: date = None,
+        age: int = None,
+        age_range: str = None
+):
+    if category_id is not None:
+        query = query.join(User.categories).filter(Category.id == category_id)
+    if gender:
+        query = query.filter(User.gender == gender)
+    if dob:
+        query = query.filter(User.birthDate == dob)
+    if age is not None:
+        year = datetime.now().year - age
+        query = query.filter(extract('year', User.birthDate) == year)
+    if age_range:
+        age_range_start, age_range_end = map(int, age_range.split("-"))
+        birth_date_start = date.today() - timedelta(days=age_range_end * 365)
+        birth_date_end = date.today() - timedelta(days=age_range_start * 365 + 1)
+        query = query.filter(User.birthDate >= birth_date_start)
+        query = query.filter(User.birthDate <= birth_date_end)
+    return query
 
 
 @router.get("/dataset/", status_code=200)
@@ -157,23 +131,7 @@ def get_dataset(
     query = db.query(User).options(
         joinedload(User.categories)
     ).join(User.categories)
-
-    # Apply filters
-    if category_id is not None:
-        query = query.join(User.categories).filter(Category.id == category_id)
-    if gender:
-        query = query.filter(User.gender == gender)
-    if dob:
-        query = query.filter(User.birthDate == dob)
-    if age is not None:
-        year = datetime.now().year - age
-        query = query.filter(extract('year', User.birthDate) == year)
-    if age_range:
-        age_range_start, age_range_end = map(int, age_range.split("-"))
-        birth_date_start = date.today() - timedelta(days=age_range_end * 365)
-        birth_date_end = date.today() - timedelta(days=age_range_start * 365 + 1)
-        query = query.filter(User.birthDate >= birth_date_start)
-        query = query.filter(User.birthDate <= birth_date_end)
+    query = query_filter(query, category_id, gender, dob, age, age_range)
 
     # Calculate total number of users and pages
     total_users = query.count()
@@ -193,3 +151,31 @@ def get_dataset(
         "total_pages": total_pages,
     }
     return response
+
+
+@router.get("/dataset-csv/", status_code=200, name="Get Dataset CSV")
+def get_dataset_file(
+        db: Session = Depends(get_db),
+        category_id: int = Query(None),
+        gender: str = Query(None, max_length=6),
+        dob: date = Query(None),
+        age: int = Query(None, ge=0),
+        age_range: str = Query(None, max_length=7),
+):
+    query = db.query(User).options(
+        joinedload(User.categories)
+    ).join(User.categories)
+    users = query_filter(query, category_id, gender, dob, age, age_range)
+
+    csv_string = "category,firstname,lastname,email,gender,birthDate\n"
+    for user in users:
+        if category_id is not None:
+            category_name = db.query(Category.name).filter(Category.id == category_id).first()[0]
+            csv_string += f"{category_name},{user.firstname},{user.lastname},{user.email},{user.gender},{user.birthDate.strftime('%Y-%m-%d')}\n"
+            continue
+
+        for category in user.categories:
+            csv_string += f"{category.name},{user.firstname},{user.lastname},{user.email},{user.gender},{user.birthDate.strftime('%Y-%m-%d')}\n"
+
+    return Response(content=csv_string, media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=dataset.csv"})

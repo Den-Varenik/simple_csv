@@ -1,4 +1,6 @@
-from datetime import datetime
+import csv
+import io
+from datetime import datetime, date
 from typing import List
 
 from app.models.categories import Category
@@ -66,3 +68,28 @@ def test_dataset_filter_range(db, client, users: List[User]):
     assert response.status_code == 200
     assert len(users) == 1
     assert users[0]["firstname"] == "Charlie"
+
+
+def test_get_dataset_file(client):
+    response = client.get("/dataset-csv/", params={"age": 30})
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "text/csv; charset=utf-8"
+    assert "attachment; filename=dataset.csv" in response.headers["Content-Disposition"]
+
+    # Read the CSV content from the response body
+    csv_content = response.content.decode("utf-8")
+    csv_reader = csv.reader(io.StringIO(csv_content))
+
+    # Check the CSV headers
+    headers = next(csv_reader)
+    assert headers == ["category", "firstname", "lastname", "email", "gender", "birthDate"]
+
+    # Check the CSV rows
+    for row in csv_reader:
+        assert len(row) == 6
+        assert isinstance(row[0], str)  # category
+        assert isinstance(row[1], str)  # firstname
+        assert isinstance(row[2], str)  # lastname
+        assert "@" in row[3]  # email
+        assert isinstance(row[4], str)  # gender
+        assert date.fromisoformat(row[5]) <= date.today().replace(year=date.today().year - 30)  # birthDate
