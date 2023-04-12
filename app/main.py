@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from uvicorn import run
 
-from app.views import categories, users, dataset
 from app.config.settings import SECRET_KEY
+from app.views import categories, users, dataset
 
 app = FastAPI()
 app.state.secret_key = SECRET_KEY
