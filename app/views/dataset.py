@@ -1,11 +1,12 @@
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
+from sqlalchemy.orm import Session, joinedload
 
-from app.config.database import get_db
+from app.config.database import get_db, create_or_update, get_or_create
 from app.models.categories import Category
 from app.models.users import User
+from app.schemas.users import UserWithCategories
 
 router = APIRouter(
     prefix="",
@@ -16,11 +17,9 @@ router = APIRouter(
 def parse_csv_data(data):
     rows = data.strip().split('\n')
     header = rows[0].strip().split(',')
-    data = []
-    for row in rows[1:]:
+    for row in iter(rows[1:]):
         values = row.strip().split(',')
-        data.append(dict(zip(header, values)))
-    return data
+        yield dict(zip(header, values))
 
 
 @router.post("/upload-csv/")
@@ -28,32 +27,118 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
     if file.content_type != "text/csv":
         raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
 
-    try:
-        content = await file.read()
-        data = parse_csv_data(content.decode('utf-8'))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Error parsing CSV data.")
+    content = await file.read()
 
-    required_fields = ['category', 'firstname', 'lastname', 'email', 'gender', 'birthDate']
-    if not all(field in data[0] for field in required_fields):
-        raise HTTPException(status_code=400, detail="Invalid column headers in CSV data.")
+    category_names = []
+    for row in parse_csv_data(content.decode('utf-8')):
+        category_name = row.pop('category').lower().capitalize()
 
-    for row in data:
-        user = User(
-            firstname=row['firstname'],
-            lastname=row['lastname'],
-            email=row['email'],
-            gender=row['gender'],
-            birthDate=datetime.strptime(row['birthDate'], '%Y-%m-%d').date()
-        )
-        db.add(user)
-        db.flush()  # flush the session to get the user ID
-        categories = [c.strip() for c in row['category'].split(',')]
-        for cat_name in categories:
-            category = db.query(Category).filter_by(name=cat_name).first()
-            if not category:
-                category = Category(name=cat_name)
-                db.add(category)
-            category.users.append(user)
-    db.commit()
+        category_names.append(category_name)
+
+    unique_categories = set(category_names)
+    result = db.query(Category.name).filter(Category.name.in_(unique_categories)).all()
+    database_categories = {item for sublist in result for item in sublist}
+    new_categories = unique_categories - database_categories
+
+    if new_categories:
+        db.bulk_save_objects([Category(name=name) for name in new_categories])
+        db.commit()
+
+    print(unique_categories)
+    print(database_categories)
+    print(new_categories)
+    # user_objects = []
+    #
+    # category_names = []
+    # category_users = []
+    # for row in data:
+    #     category_name = row.pop('category').lower().capitalize()
+    #
+    #     row['birthDate'] = datetime.strptime(row['birthDate'], '%Y-%m-%d').date()
+    #     user = User(**row)
+    #     user_objects.append(user)
+    #
+        # try:
+        #     index = category_names.index('category_name')
+        # except ValueError:
+        #     category_names.append(category_name)
+    #         users = [user]
+    #         category_users.append(users)
+    #         continue
+    #
+    #     users = category_users[index]
+    #     users.append(user)
+
+    # db.bulk_save_objects(user_objects)
+    # db.bulk_save_objects(category_objects)
+
+    # db.commit()
+
+    # for user in iter(user_objects):
+    # db.refresh(user_objects)
+
+    # result = db.query(Category.name).filter(Category.name.in_(category_names)).all()
+    # flat_result = [item for sublist in result for item in sublist]
+    # print(flat_result)
+    # print(category_names)
+
+    # for num, name in enumerate(category_names):
+    #     category, created = create_or_update(db, Category, name=name)
+        # user.categories.append(category_objects[num])
+
+    # db.bulk_save_objects(user_objects)
+    # db.commit()
+
     return {"message": "File uploaded successfully"}
+
+
+@router.get("/dataset/", status_code=200)
+def get_dataset(
+        db: Session = Depends(get_db),
+        page: int = Query(1, gt=0),
+        page_size: int = Query(10, ge=1, le=20),
+        category_id: int = Query(None),
+        gender: str = Query(None, max_length=6),
+        dob: date = Query(None),
+        age: int = Query(None, ge=0),
+        age_range: str = Query(None, max_length=7),
+):
+    query = db.query(User).options(
+        joinedload(User.categories)
+    )
+
+    # Apply filters
+    if category_id is not None:
+        query = query.filter(Category.id == category_id)
+    if gender:
+        query = query.filter(User.gender == gender)
+    if dob:
+        query = query.filter(User.birthDate == dob)
+    if age is not None:
+        birth_date = date.today() - timedelta(days=age * 365)
+        query = query.filter(User.birthDate >= birth_date)
+    if age_range:
+        age_range_start, age_range_end = map(int, age_range.split("-"))
+        birth_date_start = date.today() - timedelta(days=age_range_end * 365)
+        birth_date_end = date.today() - timedelta(days=age_range_start * 365 + 1)
+        query = query.filter(User.birthDate >= birth_date_start)
+        query = query.filter(User.birthDate <= birth_date_end)
+
+    # Calculate total number of users and pages
+    total_users = query.count()
+    total_pages = (total_users - 1) // page_size + 1
+
+    # Apply pagination
+    query = query.limit(page_size).offset((page - 1) * page_size)
+
+    # Retrieve the filtered and paginated users
+    users = query.all()
+
+    response = {
+        "users": [UserWithCategories.from_orm(user).dict() for user in users],
+        "page": page,
+        "page_size": page_size,
+        "total_users": total_users,
+        "total_pages": total_pages,
+    }
+    return response
