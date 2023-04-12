@@ -2,7 +2,7 @@ from datetime import date
 from typing import List, Optional
 
 from pydantic import BaseModel
-
+from app.schemas.categories import CategorySchema
 
 class UserBase(BaseModel):
     firstname: str
@@ -34,3 +34,7 @@ class UserSchema(UserBase):
 
     class Config:
         orm_mode = True
+
+
+class UserWithCategories(UserSchema):
+    categories: List[CategorySchema]
