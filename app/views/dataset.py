@@ -2,6 +2,7 @@ from datetime import datetime, date, timedelta
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.sql import extract
 
 from app.config.database import get_db
 from app.models.categories import Category
@@ -159,7 +160,20 @@ def get_dataset(
 
     # Apply filters
     if category_id is not None:
-        query = query.filter(Category.id == category_id)
+        query = query.join(User.categories).filter(Category.id == category_id)
+    if gender:
+        query = query.filter(User.gender == gender)
+    if dob:
+        query = query.filter(User.birthDate == dob)
+    if age is not None:
+        year = datetime.now().year - age
+        query = query.filter(extract('year', User.birthDate) == year)
+    if age_range:
+        age_range_start, age_range_end = map(int, age_range.split("-"))
+        birth_date_start = date.today() - timedelta(days=age_range_end * 365)
+        birth_date_end = date.today() - timedelta(days=age_range_start * 365 + 1)
+        query = query.filter(User.birthDate >= birth_date_start)
+        query = query.filter(User.birthDate <= birth_date_end)
 
     # Calculate total number of users and pages
     total_users = query.count()

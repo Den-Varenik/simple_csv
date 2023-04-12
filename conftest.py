@@ -70,8 +70,8 @@ def users(db) -> List[User]:
         gender="male",
         birthDate=date(2000, 1, 1)
     )
-    category1 = Category(name="toys")
-    category2 = Category(name="electronics")
+    category1 = Category(name="Toys")
+    category2 = Category(name="Electronics")
     user1.categories.append(category1)
     user2.categories.append(category2)
     user3.categories.extend([category1, category2])
