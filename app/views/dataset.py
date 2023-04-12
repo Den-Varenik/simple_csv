@@ -29,24 +29,74 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
 
     content = await file.read()
 
-    category_names = []
+    unique_categories = []
+    category_users_emails = []
+    users_additional_info = []
     for row in parse_csv_data(content.decode('utf-8')):
         category_name = row.pop('category').lower().capitalize()
+        row['birthDate'] = datetime.strptime(row['birthDate'], '%Y-%m-%d').date()
 
-        category_names.append(category_name)
+        try:
+            index = unique_categories.index(category_name)
+        except ValueError:
+            unique_categories.append(category_name)
+            category_users_emails.append([row.pop('email').lower()])
+            users_additional_info.append([row])
+            continue
 
-    unique_categories = set(category_names)
-    result = db.query(Category.name).filter(Category.name.in_(unique_categories)).all()
+        users_emails = category_users_emails[index]
+        users_emails.append(row.pop('email').lower())
+
+        users_info = users_additional_info[index]
+        users_info.append(row)
+
+    set_categories = set(unique_categories)
+    result = db.query(Category.name).filter(Category.name.in_(set_categories)).all()
     database_categories = {item for sublist in result for item in sublist}
-    new_categories = unique_categories - database_categories
+    new_categories = set_categories - database_categories
 
     if new_categories:
         db.bulk_save_objects([Category(name=name) for name in new_categories])
         db.commit()
 
-    print(unique_categories)
-    print(database_categories)
-    print(new_categories)
+    # print(set_categories)
+    # print(database_categories)
+    # print(new_categories)
+
+    for num, category_name in enumerate(unique_categories):
+        category = db.query(Category).filter_by(name=category_name).first()
+
+        emails = category_users_emails[num]
+        info = users_additional_info[num]
+
+        set_emails = set(emails)
+        result = db.query(User.email).filter(User.email.in_(set_emails)).all()
+        database_emails = {item for sublist in result for item in sublist}
+        new_emails = set_emails - database_emails
+
+        if new_emails:
+            users = list()
+            for email in new_emails:
+                index = emails.index(email)
+                user_data = info[index]
+                users.append(User(email=email, **user_data))
+
+            if users:
+                db.bulk_save_objects(users)
+                db.commit()
+
+        users = db.query(User).filter(User.email.in_(set_emails)).all()
+        for user in users:
+            user.categories.append(category)
+        db.add_all(users)
+        db.commit()
+
+        # print(set_emails)
+        # print(database_emails)
+        # print(new_emails)
+
+
+
     # user_objects = []
     #
     # category_names = []
@@ -62,12 +112,12 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
         #     index = category_names.index('category_name')
         # except ValueError:
         #     category_names.append(category_name)
-    #         users = [user]
-    #         category_users.append(users)
-    #         continue
-    #
-    #     users = category_users[index]
-    #     users.append(user)
+        #     users = [user]
+        #     category_users.append(users)
+        #     continue
+        #
+        # users = category_users[index]
+        # users.append(user)
 
     # db.bulk_save_objects(user_objects)
     # db.bulk_save_objects(category_objects)
